@@ -16,12 +16,17 @@
 (define-constant ERR-CONSENT-REVOKED (err u110))
 (define-constant ERR-INVALID-TIMESTAMP (err u111))
 (define-constant ERR-HASH-MISMATCH (err u112))
+(define-constant ERR-INVALID-INPUT (err u113))
+(define-constant ERR-STRING-TOO-LONG (err u114))
+(define-constant ERR-EMPTY-STRING (err u115))
+(define-constant ERR-INVALID-HASH (err u116))
 
 ;; Contract constants
 (define-constant CONTRACT-OWNER tx-sender)
 (define-constant MAX-DATA-SIZE u1000000)
 (define-constant MIN-ACCESS-DURATION u86400) ;; 24 hours in seconds
 (define-constant MAX-ACCESS-DURATION u31536000) ;; 1 year in seconds
+(define-constant ZERO-HASH 0x0000000000000000000000000000000000000000000000000000000000000000)
 
 ;; Data variables for contract state
 (define-data-var next-data-id uint u1)
@@ -148,6 +153,77 @@
   }
 )
 
+;; Input validation helper functions
+(define-read-only (is-valid-hash (hash (buff 32)))
+  (not (is-eq hash ZERO-HASH))
+)
+
+(define-read-only (is-valid-principal (addr principal))
+  (not (is-eq addr 'SP000000000000000000002Q6VF78))
+)
+
+(define-read-only (is-valid-string (str (string-ascii 500)))
+  (> (len str) u0)
+)
+
+(define-read-only (is-valid-data-type (data-type (string-ascii 50)))
+  (and (> (len data-type) u0)
+       (<= (len data-type) u50))
+)
+
+(define-read-only (is-valid-study-category (category (string-ascii 100)))
+  (and (> (len category) u0)
+       (<= (len category) u100))
+)
+
+(define-read-only (is-valid-metadata (metadata (string-ascii 500)))
+  (<= (len metadata) u500)
+)
+
+(define-read-only (is-valid-institution-name (name (string-ascii 100)))
+  (and (> (len name) u0)
+       (<= (len name) u100))
+)
+
+(define-read-only (is-valid-study-name (name (string-ascii 200)))
+  (and (> (len name) u0)
+       (<= (len name) u200))
+)
+
+(define-read-only (is-valid-study-purpose (purpose (string-ascii 500)))
+  (and (> (len purpose) u0)
+       (<= (len purpose) u500))
+)
+
+(define-read-only (is-valid-ethics-approval (approval (string-ascii 100)))
+  (and (> (len approval) u0)
+       (<= (len approval) u100))
+)
+
+(define-read-only (is-valid-access-purpose (purpose (string-ascii 200)))
+  (and (> (len purpose) u0)
+       (<= (len purpose) u200))
+)
+
+(define-read-only (is-valid-usage-restrictions (restrictions (string-ascii 300)))
+  (<= (len restrictions) u300)
+)
+
+(define-read-only (is-valid-access-type (access-type (string-ascii 30)))
+  (and (> (len access-type) u0)
+       (<= (len access-type) u30))
+)
+
+(define-read-only (is-valid-credentials (credentials (string-ascii 200)))
+  (and (> (len credentials) u0)
+       (<= (len credentials) u200))
+)
+
+(define-read-only (is-valid-consent-scope (scope (string-ascii 200)))
+  (and (> (len scope) u0)
+       (<= (len scope) u200))
+)
+
 ;; Upload anonymized clinical data with comprehensive metadata
 (define-public (upload-clinical-data
     (data-hash (buff 32))
@@ -164,10 +240,15 @@
     )
     ;; Validate input parameters
     (asserts! (not (var-get contract-paused)) ERR-UNAUTHORIZED-ACCESS)
-    (asserts! (> data-size u0) ERR-INVALID-DATA-ID)
-    (asserts! (<= data-size MAX-DATA-SIZE) ERR-INVALID-DATA-ID)
-    (asserts! (>= anonymization-level u1) ERR-INVALID-DATA-ID)
-    (asserts! (<= anonymization-level u5) ERR-INVALID-DATA-ID)
+    (asserts! (is-valid-hash data-hash) ERR-INVALID-HASH)
+    (asserts! (> data-size u0) ERR-INVALID-INPUT)
+    (asserts! (<= data-size MAX-DATA-SIZE) ERR-INVALID-INPUT)
+    (asserts! (>= anonymization-level u1) ERR-INVALID-INPUT)
+    (asserts! (<= anonymization-level u5) ERR-INVALID-INPUT)
+    (asserts! (is-valid-data-type data-type) ERR-INVALID-INPUT)
+    (asserts! (is-valid-study-category study-category) ERR-INVALID-INPUT)
+    (asserts! (is-valid-metadata metadata) ERR-INVALID-INPUT)
+    (asserts! (is-valid-hash consent-id) ERR-INVALID-HASH)
     
     ;; Verify consent exists and is active
     (asserts! 
@@ -176,7 +257,7 @@
         false) 
       ERR-CONSENT-REVOKED)
     
-    ;; Store clinical data record
+    ;; Store clinical data record with validated inputs
     (map-set clinical-data
       { data-id: current-data-id }
       {
@@ -228,6 +309,15 @@
       (current-study-id (var-get next-study-id))
       (current-timestamp (unwrap! (get-block-info? time (- block-height u1)) ERR-INVALID-TIMESTAMP))
     )
+    ;; Validate input parameters
+    (asserts! (is-valid-study-name study-name) ERR-INVALID-INPUT)
+    (asserts! (is-valid-institution-name institution) ERR-INVALID-INPUT)
+    (asserts! (is-valid-study-purpose study-purpose) ERR-INVALID-INPUT)
+    (asserts! (is-valid-ethics-approval ethics-approval) ERR-INVALID-INPUT)
+    (asserts! (> end-date current-timestamp) ERR-INVALID-TIMESTAMP)
+    (asserts! (> participant-count u0) ERR-INVALID-INPUT)
+    (asserts! (> (len required-data-types) u0) ERR-INVALID-INPUT)
+    
     ;; Validate researcher is verified
     (asserts! (is-verified-researcher tx-sender) ERR-INVALID-RESEARCHER)
     
@@ -238,12 +328,7 @@
         false)
       ERR-INVALID-INSTITUTION)
     
-    ;; Validate study parameters
-    (asserts! (> (len study-name) u0) ERR-INVALID-STUDY-ID)
-    (asserts! (> end-date current-timestamp) ERR-INVALID-TIMESTAMP)
-    (asserts! (> participant-count u0) ERR-INVALID-STUDY-ID)
-    
-    ;; Register the study
+    ;; Register the study with validated inputs
     (map-set research-studies
       { study-id: current-study-id }
       {
@@ -278,6 +363,10 @@
       (expiry-timestamp (+ current-timestamp access-duration))
     )
     ;; Validate inputs
+    (asserts! (> data-id u0) ERR-INVALID-INPUT)
+    (asserts! (> study-id u0) ERR-INVALID-INPUT)
+    (asserts! (is-valid-access-purpose access-purpose) ERR-INVALID-INPUT)
+    (asserts! (is-valid-usage-restrictions usage-restrictions) ERR-INVALID-INPUT)
     (asserts! (is-some (map-get? clinical-data { data-id: data-id })) ERR-DATA-NOT-FOUND)
     (asserts! (is-some (map-get? research-studies { study-id: study-id })) ERR-INVALID-STUDY-ID)
     (asserts! (is-verified-researcher tx-sender) ERR-INVALID-RESEARCHER)
@@ -290,7 +379,7 @@
       (asserts! (is-eq (get status study-data) "active") ERR-INVALID-STUDY-ID)
     )
     
-    ;; Grant access permission (auto-approval for now, could add manual review)
+    ;; Grant access permission with validated inputs
     (map-set data-access-permissions
       { data-id: data-id, researcher: tx-sender }
       {
@@ -321,6 +410,11 @@
       (permission-data (unwrap! (map-get? data-access-permissions { data-id: data-id, researcher: tx-sender }) ERR-UNAUTHORIZED-ACCESS))
       (clinical-record (unwrap! (map-get? clinical-data { data-id: data-id }) ERR-DATA-NOT-FOUND))
     )
+    ;; Validate inputs
+    (asserts! (> data-id u0) ERR-INVALID-INPUT)
+    (asserts! (is-valid-access-type access-type) ERR-INVALID-INPUT)
+    (asserts! (is-valid-hash ip-hash) ERR-INVALID-HASH)
+    
     ;; Validate access permission
     (asserts! (get is-active permission-data) ERR-UNAUTHORIZED-ACCESS)
     (asserts! (< current-timestamp (get expiry-timestamp permission-data)) ERR-ACCESS-EXPIRED)
@@ -328,7 +422,7 @@
     ;; Verify consent is still active
     (asserts! (get consent-status clinical-record) ERR-CONSENT-REVOKED)
     
-    ;; Log the access
+    ;; Log the access with validated inputs
     (let ((log-id (+ (var-get total-access-requests) u1)))
       (map-set access-logs
         { log-id: log-id }
@@ -384,8 +478,14 @@
     (
       (current-timestamp (unwrap! (get-block-info? time (- block-height u1)) ERR-INVALID-TIMESTAMP))
     )
-    ;; Only contract owner can verify researchers (could be extended to authorized verifiers)
+    ;; Only contract owner can verify researchers
     (asserts! (is-eq tx-sender CONTRACT-OWNER) ERR-UNAUTHORIZED-ACCESS)
+    
+    ;; Validate inputs
+    (asserts! (is-valid-principal researcher) ERR-INVALID-INPUT)
+    (asserts! (is-valid-institution-name institution) ERR-INVALID-INPUT)
+    (asserts! (is-valid-credentials credentials) ERR-INVALID-INPUT)
+    (asserts! (> (len research-areas) u0) ERR-INVALID-INPUT)
     
     ;; Validate institution is verified
     (asserts! 
@@ -394,6 +494,7 @@
         false)
       ERR-INVALID-INSTITUTION)
     
+    ;; Register researcher with validated inputs
     (map-set verified-researchers
       { researcher: researcher }
       {
@@ -425,6 +526,15 @@
     ;; Only contract owner can register institutions
     (asserts! (is-eq tx-sender CONTRACT-OWNER) ERR-UNAUTHORIZED-ACCESS)
     
+    ;; Validate inputs
+    (asserts! (is-valid-institution-name institution-id) ERR-INVALID-INPUT)
+    (asserts! (is-valid-string institution-name) ERR-INVALID-INPUT)
+    (asserts! (<= (len institution-name) u200) ERR-STRING-TOO-LONG)
+    (asserts! (is-valid-string verification-authority) ERR-INVALID-INPUT)
+    (asserts! (<= (len verification-authority) u100) ERR-STRING-TOO-LONG)
+    (asserts! (<= (len contact-info) u300) ERR-STRING-TOO-LONG)
+    
+    ;; Register institution with validated inputs
     (map-set verified-institutions
       { institution-id: institution-id }
       {
@@ -454,10 +564,14 @@
     (
       (current-timestamp (unwrap! (get-block-info? time (- block-height u1)) ERR-INVALID-TIMESTAMP))
     )
-    ;; Validate consent parameters
+    ;; Validate inputs
+    (asserts! (is-valid-hash consent-id) ERR-INVALID-HASH)
+    (asserts! (is-valid-consent-scope consent-scope) ERR-INVALID-INPUT)
+    (asserts! (> (len data-types-consented) u0) ERR-INVALID-INPUT)
     (asserts! (> expiry-date current-timestamp) ERR-INVALID-TIMESTAMP)
-    (asserts! (> consent-version u0) ERR-INVALID-PERMISSION)
+    (asserts! (> consent-version u0) ERR-INVALID-INPUT)
     
+    ;; Record consent with validated inputs
     (map-set consent-records
       { consent-id: consent-id }
       {
@@ -481,6 +595,9 @@
     (
       (consent-data (unwrap! (map-get? consent-records { consent-id: consent-id }) ERR-CONSENT-REVOKED))
     )
+    ;; Validate input
+    (asserts! (is-valid-hash consent-id) ERR-INVALID-HASH)
+    
     ;; Check if withdrawal is allowed
     (asserts! (get withdrawal-allowed consent-data) ERR-INSUFFICIENT-PERMISSIONS)
     
@@ -503,6 +620,10 @@
       (clinical-record (unwrap! (map-get? clinical-data { data-id: data-id }) ERR-DATA-NOT-FOUND))
       (permission-data (unwrap! (map-get? data-access-permissions { data-id: data-id, researcher: researcher }) ERR-UNAUTHORIZED-ACCESS))
     )
+    ;; Validate inputs
+    (asserts! (> data-id u0) ERR-INVALID-INPUT)
+    (asserts! (is-valid-principal researcher) ERR-INVALID-INPUT)
+    
     ;; Only data provider or contract owner can revoke access
     (asserts! (or (is-eq tx-sender (get data-provider clinical-record))
                   (is-eq tx-sender CONTRACT-OWNER)) 
@@ -529,6 +650,10 @@
           download-count: u0, citation-count: u0, impact-score: u0 }
         (map-get? usage-statistics { data-id: data-id })))
     )
+    ;; Validate inputs
+    (asserts! (> data-id u0) ERR-INVALID-INPUT)
+    (asserts! (> citation-increment u0) ERR-INVALID-INPUT)
+    
     ;; Verify data exists and researcher has access
     (asserts! (is-some (map-get? clinical-data { data-id: data-id })) ERR-DATA-NOT-FOUND)
     (asserts! (has-active-access data-id tx-sender) ERR-UNAUTHORIZED-ACCESS)
